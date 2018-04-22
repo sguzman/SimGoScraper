@@ -228,8 +228,59 @@ func main() {
 
         for i := 1; i < len(allBooks); i += 1 {
             receivedHostLink := <- hosts
-            fmt.Println(receivedHostLink)
             hostsLinks = append(hostsLinks, receivedHostLink)
+        }
+    }
+
+    rapidHost := make(chan map[string]string, 1000)
+    rapidHostDetails := make([]map[string]string, 0)
+    {
+        rapidHostThread := func(i int) {
+            for j := i; j < len(hostsLinks); j += cores {
+                url := hostsLinks[j]
+                htmlBody := get(url)
+                root, ok := html.Parse(strings.NewReader(htmlBody))
+                if ok != nil {
+                    panic(ok)
+                }
+
+                bookdetailsMap := make(map[string]string)
+                {
+                    bookdetailsRaw, ok := scrape.Find(root, scrape.ByClass("file-info"))
+                    if !ok {
+                        panic(ok)
+                    }
+
+                    bookdetails, ok := scrape.Find(bookdetailsRaw, scrape.ByTag(atom.Ul))
+                    if ok {
+                        bookdetailsKeys := scrape.FindAll(bookdetails, scrape.ByTag(atom.Span))
+                        bookdetailsVals := scrape.FindAll(bookdetails, scrape.ByTag(atom.Li))
+                        for i := range bookdetailsKeys {
+                            key := bookdetailsKeys[i]
+                            val := bookdetailsVals[i]
+
+                            keyStr := scrape.Text(key)
+                            valStr := scrape.Text(val)
+
+                            trimKey := strings.ToLower(keyStr)
+                            trimVal := strings.TrimPrefix(strings.TrimPrefix(valStr, keyStr), " : ")
+                            bookdetailsMap[trimKey] = trimVal
+                        }
+                    }
+                }
+
+                rapidHost <- bookdetailsMap
+            }
+        }
+
+        for i := 1; i <= cores; i += 1 {
+            go rapidHostThread(i)
+        }
+
+        for i := 1; i < len(hostsLinks); i += 1 {
+            receivedRapid := <- rapidHost
+            fmt.Println(receivedRapid)
+            rapidHostDetails = append(rapidHostDetails, receivedRapid)
         }
     }
 }
